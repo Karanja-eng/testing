@@ -1,0 +1,12 @@
+# Ignore everything
+*
+
+# Allow only Python and JSX files
+!*.py
+!*.jsx
+
+# Allow directories (so .gitignore rules inside them work)
+!*/
+
+# Optional: keep the .gitignore file itself
+!.gitignore

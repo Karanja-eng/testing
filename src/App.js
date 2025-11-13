@@ -1,11 +1,11 @@
 import React from "react";
 
-import Modeling from "./civilai/segmentation.jsx";
+import MainDApp from "./civilai/MainApp";
 
 const App = () => {
   return (
     <>
-      <Modeling />
+      <MainDApp />
     </>
   );
 };
