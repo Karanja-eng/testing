@@ -4,9 +4,13 @@
 # Allow only Python and JSX files
 !*.py
 !*.jsx
+!*.hpp
+!*.cpp
+
 
 # Allow directories (so .gitignore rules inside them work)
 !*/
 
 # Optional: keep the .gitignore file itself
 !.gitignore
+
