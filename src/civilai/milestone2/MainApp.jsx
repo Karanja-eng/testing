@@ -1,49 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Upload, Zap, Trash2, Box, Ruler, Settings } from "lucide-react";
-
-function ModelViewer({ url }) {
-  return (
-    <div
-      style={{
-        width: "100%",
-        height: "100%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-        borderRadius: "12px",
-        color: "white",
-      }}
-    >
-      <div style={{ textAlign: "center", padding: "20px" }}>
-        <Box size={48} style={{ margin: "0 auto 16px", opacity: 0.9 }} />
-        <p style={{ fontSize: "18px", marginBottom: "10px", fontWeight: 600 }}>
-          ✓ CAD-Quality Model Generated
-        </p>
-        <p
-          style={{
-            fontSize: "13px",
-            opacity: 0.8,
-            maxWidth: "400px",
-            margin: "0 auto",
-          }}
-        >
-          Clean geometry • Uniform walls • Proper openings
-        </p>
-        <p
-          style={{
-            fontSize: "11px",
-            opacity: 0.6,
-            marginTop: "16px",
-            wordBreak: "break-all",
-          }}
-        >
-          {url}
-        </p>
-      </div>
-    </div>
-  );
-}
+import { Upload, Settings, Loader, Zap, Trash2 } from "lucide-react";
+import FloorplanViewer from "./FloorplanViewer.jsx";
 
 export default function MainDApp() {
   const [fileId, setFileId] = useState("");
@@ -53,23 +10,26 @@ export default function MainDApp() {
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState("");
   const [stats, setStats] = useState(null);
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
+  // Detect system theme
   const [isDark, setIsDark] = useState(true);
 
   useEffect(() => {
+    // Check if parent window has dark mode
     const checkTheme = () => {
       if (window.matchMedia) {
         const prefersDark = window.matchMedia(
-          "(prefers-color-scheme: dark)"
+          "(prefers-color-scheme: light)"
         ).matches;
         setIsDark(prefersDark);
       }
     };
     checkTheme();
 
+    // Listen for theme changes
     if (window.matchMedia) {
-      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: light)");
       const handler = (e) => setIsDark(e.matches);
       mediaQuery.addEventListener("change", handler);
       return () => mediaQuery.removeEventListener("change", handler);
@@ -81,32 +41,23 @@ export default function MainDApp() {
     sidebar: isDark ? "#1e293b" : "#ffffff",
     border: isDark ? "#334155" : "#e2e8f0",
     text: isDark ? "#e2e8f0" : "#1e293b",
-    textMuted: isDark ? "#94a3b8" : "#64748b",
-    textDim: isDark ? "#64748b" : "#94a3b8",
-    button: isDark ? "#334155" : "#f1f5f9",
-    buttonHover: isDark ? "#475569" : "#e2e8f0",
-    accent: "#667eea",
+    textMuted: isDark ? "#94a3b8" : "#0a1c35ff",
+    textDim: isDark ? "#64748b" : "#15345eff",
+    button: isDark ? "#334155" : "#3a79b8ff",
+    buttonHover: isDark ? "#475569" : "#1d4a86ff",
   };
 
   const [params, setParams] = useState({
-    // Detection
-    wall_threshold: 0.3,
-    opening_threshold: 0.5,
-
-    // Geometry
-    wall_thickness: 0.15, // 15cm
-    wall_height: 3.0, // 3m
-    door_height: 2.1, // 2.1m
-    window_height: 1.5, // 1.5m
-    window_sill: 0.9, // 90cm
-
-    // Scaling
     scale: 0.01,
-
-    // Options
-    use_yolo: false,
-    snap_corners: true,
-    orthogonalize: true,
+    wall_height: 3.0,
+    wall_threshold: 0.2,
+    room_threshold: 0.3,
+    yolo_conf: 0.3,
+    use_yolo: true,
+    min_wall_area: 200,
+    max_walls: 25,
+    extract_rooms: false,
+    debug_vis: false,
   });
 
   async function handleUpload(e) {
@@ -132,6 +83,7 @@ export default function MainDApp() {
       if (res.ok) {
         setFileId(data.file_id);
         setFileName(data.filename);
+        console.log("✓ File uploaded:", data);
       } else {
         setError(data.detail || "Upload failed");
       }
@@ -156,11 +108,12 @@ export default function MainDApp() {
       const form = new FormData();
       form.append("file_id", fileId);
 
+      // Add all parameters
       Object.entries(params).forEach(([key, value]) => {
         form.append(key, value.toString());
       });
 
-      const res = await fetch("http://localhost:8001/process_cad", {
+      const res = await fetch("http://localhost:8001/process", {
         method: "POST",
         body: form,
       });
@@ -171,8 +124,7 @@ export default function MainDApp() {
         setUrl(`http://localhost:8001${data.glb_url}`);
         setStats({
           wallCount: data.wall_count,
-          doorCount: data.door_count,
-          windowCount: data.window_count,
+          roomCount: data.room_count,
           parameters: data.parameters,
         });
       } else {
@@ -195,7 +147,9 @@ export default function MainDApp() {
         await fetch(`http://localhost:8001/file/${fileId}`, {
           method: "DELETE",
         });
-      } catch (e) {}
+      } catch (e) {
+        console.error("Failed to delete file:", e);
+      }
     }
     setFileId("");
     setFileName("");
@@ -212,18 +166,19 @@ export default function MainDApp() {
         background: theme.bg,
         color: theme.text,
         fontFamily: "system-ui, -apple-system, sans-serif",
-        transition: "all 0.3s",
+        transition: "background-color 0.3s, color 0.3s",
       }}
     >
       {/* Sidebar */}
       <div
         style={{
-          width: "360px",
+          width: "340px",
           background: theme.sidebar,
           borderRight: `1px solid ${theme.border}`,
           display: "flex",
           flexDirection: "column",
           overflowY: "auto",
+          transition: "background-color 0.3s, border-color 0.3s",
         }}
       >
         {/* Header */}
@@ -233,40 +188,30 @@ export default function MainDApp() {
             borderBottom: `1px solid ${theme.border}`,
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "12px",
-              marginBottom: "8px",
-            }}
-          >
-            <Box size={28} style={{ color: theme.accent }} />
-            <h1
-              style={{
-                margin: 0,
-                fontSize: "22px",
-                fontWeight: "bold",
-                background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-              }}
-            >
-              CAD-Quality Pipeline
-            </h1>
-          </div>
-          <p
+          <h1
             style={{
               margin: 0,
-              fontSize: "13px",
+              fontSize: "24px",
+              fontWeight: "bold",
+              background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+            }}
+          >
+            Floorplan to 3D
+          </h1>
+          <p
+            style={{
+              margin: "8px 0 0 0",
+              fontSize: "14px",
               color: theme.textMuted,
             }}
           >
-            Professional floorplan to 3D conversion
+            Upload → Adjust → Generate
           </p>
         </div>
 
-        {/* Upload */}
+        {/* Upload Section */}
         <div style={{ padding: "24px" }}>
           <label
             style={{
@@ -277,10 +222,16 @@ export default function MainDApp() {
               borderRadius: "12px",
               textAlign: "center",
               cursor: uploading ? "not-allowed" : "pointer",
+              transition: "all 0.2s",
               background: uploading ? theme.button : "transparent",
               opacity: uploading ? 0.6 : 1,
-              transition: "all 0.2s",
             }}
+            onMouseEnter={(e) =>
+              !uploading && (e.currentTarget.style.borderColor = "#667eea")
+            }
+            onMouseLeave={(e) =>
+              (e.currentTarget.style.borderColor = theme.border)
+            }
           >
             <input
               type="file"
@@ -289,10 +240,19 @@ export default function MainDApp() {
               disabled={uploading}
               style={{ display: "none" }}
             />
-            <Upload
-              style={{ margin: "0 auto", color: theme.accent }}
-              size={32}
-            />
+            {uploading ? (
+              <Loader
+                style={{
+                  margin: "0 auto",
+                  animation: "spin 1s linear infinite",
+                }}
+              />
+            ) : (
+              <Upload
+                style={{ margin: "0 auto", color: "#667eea" }}
+                size={32}
+              />
+            )}
             <p
               style={{
                 margin: "12px 0 0 0",
@@ -300,10 +260,13 @@ export default function MainDApp() {
                 color: theme.text,
               }}
             >
-              {uploading ? "Uploading..." : fileName || "Upload floorplan"}
+              {uploading
+                ? "Uploading..."
+                : fileName || "Click to upload floorplan"}
             </p>
           </label>
 
+          {/* Generate Button */}
           {fileId && (
             <div style={{ marginTop: "16px", display: "flex", gap: "8px" }}>
               <button
@@ -311,33 +274,35 @@ export default function MainDApp() {
                 disabled={processing}
                 style={{
                   flex: 1,
-                  padding: "16px",
+                  padding: "14px",
                   background: processing
                     ? theme.button
                     : "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
                   border: "none",
-                  borderRadius: "10px",
-                  color: "white",
+                  borderRadius: "8px",
+                  color: processing ? theme.text : "white",
                   cursor: processing ? "not-allowed" : "pointer",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  gap: "10px",
+                  gap: "8px",
                   fontSize: "15px",
                   fontWeight: "600",
                   opacity: processing ? 0.6 : 1,
-                  boxShadow: processing
-                    ? "none"
-                    : "0 4px 12px rgba(102, 126, 234, 0.4)",
+                  transition: "all 0.2s",
                 }}
               >
                 {processing ? (
                   <>
-                    <Zap
+                    <Loader
                       size={18}
-                      style={{ animation: "pulse 1s ease-in-out infinite" }}
+                      style={{
+                        animation: "spin 1s linear infinite",
+                        color: "white",
+                      }}
                     />
-                    Processing...
+
+                    <p className="">Processing...</p>
                   </>
                 ) : (
                   <>
@@ -351,10 +316,10 @@ export default function MainDApp() {
                 onClick={handleClear}
                 disabled={processing}
                 style={{
-                  padding: "16px",
+                  padding: "14px",
                   background: theme.button,
                   border: "none",
-                  borderRadius: "10px",
+                  borderRadius: "8px",
                   color: theme.text,
                   cursor: processing ? "not-allowed" : "pointer",
                   opacity: processing ? 0.6 : 1,
@@ -369,7 +334,7 @@ export default function MainDApp() {
             <div
               style={{
                 marginTop: "16px",
-                padding: "14px",
+                padding: "12px",
                 background: "#dc2626",
                 borderRadius: "8px",
                 fontSize: "13px",
@@ -377,7 +342,7 @@ export default function MainDApp() {
                 color: "white",
               }}
             >
-              <strong>Error:</strong> {error}
+              {error}
             </div>
           )}
 
@@ -385,28 +350,23 @@ export default function MainDApp() {
             <div
               style={{
                 marginTop: "16px",
-                padding: "14px",
+                padding: "12px",
                 background: "#059669",
                 borderRadius: "8px",
                 fontSize: "13px",
                 color: "white",
               }}
             >
-              <div style={{ fontWeight: 600, marginBottom: "4px" }}>
-                ✓ Success!
-              </div>
-              <div>
-                {stats.wallCount} walls • {stats.doorCount} doors •{" "}
-                {stats.windowCount} windows
-              </div>
+              ✓ {stats.wallCount} walls
+              {stats.roomCount > 0 ? `, ${stats.roomCount} rooms` : ""}
             </div>
           )}
         </div>
 
-        {/* Parameters */}
-        <div style={{ padding: "0 24px 24px" }}>
+        {/* Settings Toggle */}
+        <div style={{ padding: "0 24px" }}>
           <button
-            onClick={() => setShowAdvanced(!showAdvanced)}
+            onClick={() => setShowSettings(!showSettings)}
             style={{
               width: "100%",
               padding: "12px",
@@ -421,44 +381,49 @@ export default function MainDApp() {
               gap: "8px",
               fontSize: "14px",
               fontWeight: "500",
+              transition: "background-color 0.2s",
             }}
+            onMouseEnter={(e) =>
+              (e.currentTarget.style.background = theme.buttonHover)
+            }
+            onMouseLeave={(e) =>
+              (e.currentTarget.style.background = theme.button)
+            }
           >
             <Settings size={16} />
-            {showAdvanced ? "Hide" : "Show"} Advanced Settings
+            {showSettings ? "Hide" : "Show"} Parameters
           </button>
         </div>
 
-        {showAdvanced && (
+        {/* Advanced Settings */}
+        {showSettings && (
           <div
             style={{
               padding: "24px",
               borderTop: `1px solid ${theme.border}`,
-              background: isDark ? "#1a1f2e" : "#f8f9fa",
+              marginTop: "16px",
             }}
           >
             <h3
               style={{
                 margin: "0 0 16px 0",
-                fontSize: "13px",
+                fontSize: "14px",
                 fontWeight: "600",
                 textTransform: "uppercase",
-                color: theme.textMuted,
                 letterSpacing: "0.05em",
+                color: theme.textMuted,
               }}
             >
-              <Ruler
-                size={14}
-                style={{ display: "inline", marginRight: "6px" }}
-              />
-              Detection
+              Detection Settings
             </h3>
 
-            <div style={{ marginBottom: "16px" }}>
+            {/* Wall Threshold */}
+            <div style={{ marginBottom: "20px" }}>
               <label
                 style={{
                   display: "block",
-                  fontSize: "12px",
-                  marginBottom: "6px",
+                  fontSize: "13px",
+                  marginBottom: "8px",
                   color: theme.text,
                 }}
               >
@@ -466,7 +431,7 @@ export default function MainDApp() {
               </label>
               <input
                 type="range"
-                min="0.2"
+                min="0.05"
                 max="0.5"
                 step="0.05"
                 value={params.wall_threshold}
@@ -483,29 +448,56 @@ export default function MainDApp() {
                   margin: "4px 0 0 0",
                 }}
               >
-                Higher = more selective (0.25-0.35 recommended)
+                Lower = more walls detected (0.15-0.25 recommended)
               </p>
             </div>
 
+            {/* Room Threshold */}
             <div style={{ marginBottom: "20px" }}>
               <label
                 style={{
                   display: "block",
-                  fontSize: "12px",
-                  marginBottom: "6px",
+                  fontSize: "13px",
+                  marginBottom: "8px",
                   color: theme.text,
                 }}
               >
-                Opening Threshold: {params.opening_threshold.toFixed(2)}
+                Room Threshold: {params.room_threshold.toFixed(2)}
               </label>
               <input
                 type="range"
-                min="0.3"
-                max="0.7"
+                min="0.1"
+                max="0.6"
                 step="0.05"
-                value={params.opening_threshold}
+                value={params.room_threshold}
                 onChange={(e) =>
-                  updateParam("opening_threshold", parseFloat(e.target.value))
+                  updateParam("room_threshold", parseFloat(e.target.value))
+                }
+                style={{ width: "100%" }}
+                className="range-slider"
+              />
+            </div>
+
+            {/* Max Walls */}
+            <div style={{ marginBottom: "20px" }}>
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "13px",
+                  marginBottom: "8px",
+                  color: theme.text,
+                }}
+              >
+                Max Walls: {params.max_walls}
+              </label>
+              <input
+                type="range"
+                min="5"
+                max="50"
+                step="5"
+                value={params.max_walls}
+                onChange={(e) =>
+                  updateParam("max_walls", parseInt(e.target.value))
                 }
                 style={{ width: "100%" }}
                 className="range-slider"
@@ -517,77 +509,175 @@ export default function MainDApp() {
                   margin: "4px 0 0 0",
                 }}
               >
-                Detection threshold for doors & windows
+                Prevents over-segmentation (15-30 recommended)
               </p>
+            </div>
+
+            {/* YOLO Settings */}
+            <div style={{ marginBottom: "20px" }}>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  marginBottom: "8px",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={params.use_yolo}
+                  onChange={(e) => updateParam("use_yolo", e.target.checked)}
+                />
+                <span style={{ fontSize: "13px", color: theme.text }}>
+                  Enable YOLO Boost
+                </span>
+              </label>
+              {params.use_yolo && (
+                <>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "13px",
+                      marginBottom: "8px",
+                      color: theme.text,
+                    }}
+                  >
+                    YOLO Confidence: {params.yolo_conf.toFixed(2)}
+                  </label>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="0.8"
+                    step="0.05"
+                    value={params.yolo_conf}
+                    onChange={(e) =>
+                      updateParam("yolo_conf", parseFloat(e.target.value))
+                    }
+                    style={{ width: "100%" }}
+                    className="range-slider"
+                  />
+                  <p
+                    style={{
+                      fontSize: "11px",
+                      color: theme.textDim,
+                      margin: "4px 0 0 0",
+                    }}
+                  >
+                    Lower = more detections (0.2-0.4 recommended)
+                  </p>
+                </>
+              )}
+            </div>
+
+            {/* Extract Rooms */}
+            <div style={{ marginBottom: "20px" }}>
+              <label
+                style={{ display: "flex", alignItems: "center", gap: "8px" }}
+              >
+                <input
+                  type="checkbox"
+                  checked={params.extract_rooms}
+                  onChange={(e) =>
+                    updateParam("extract_rooms", e.target.checked)
+                  }
+                />
+                <span style={{ fontSize: "13px", color: theme.text }}>
+                  Extract Room Polygons
+                </span>
+              </label>
+              <p
+                style={{
+                  fontSize: "11px",
+                  color: theme.textDim,
+                  margin: "4px 0 0 0",
+                }}
+              >
+                Extract individual rooms in addition to walls
+              </p>
+            </div>
+
+            {/* Min Wall Area */}
+            <div style={{ marginBottom: "20px" }}>
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "13px",
+                  marginBottom: "8px",
+                  color: theme.text,
+                }}
+              >
+                Min Area: {params.min_wall_area}
+              </label>
+              <input
+                type="range"
+                min="50"
+                max="500"
+                step="50"
+                value={params.min_wall_area}
+                onChange={(e) =>
+                  updateParam("min_wall_area", parseFloat(e.target.value))
+                }
+                style={{ width: "100%" }}
+                className="range-slider"
+              />
             </div>
 
             <h3
               style={{
-                margin: "20px 0 16px 0",
-                fontSize: "13px",
+                margin: "24px 0 16px 0",
+                fontSize: "14px",
                 fontWeight: "600",
                 textTransform: "uppercase",
-                color: theme.textMuted,
                 letterSpacing: "0.05em",
+                color: theme.textMuted,
               }}
             >
-              <Box
-                size={14}
-                style={{ display: "inline", marginRight: "6px" }}
-              />
-              Geometry
+              3D Model Settings
             </h3>
 
-            <div style={{ marginBottom: "16px" }}>
+            {/* Scale */}
+            <div style={{ marginBottom: "20px" }}>
               <label
                 style={{
                   display: "block",
-                  fontSize: "12px",
-                  marginBottom: "6px",
+                  fontSize: "13px",
+                  marginBottom: "8px",
                   color: theme.text,
                 }}
               >
-                Wall Thickness: {(params.wall_thickness * 100).toFixed(0)}cm
+                Scale: {params.scale.toFixed(3)}
               </label>
               <input
                 type="range"
-                min="0.10"
-                max="0.30"
-                step="0.01"
-                value={params.wall_thickness}
+                min="0.001"
+                max="0.1"
+                step="0.001"
+                value={params.scale}
                 onChange={(e) =>
-                  updateParam("wall_thickness", parseFloat(e.target.value))
+                  updateParam("scale", parseFloat(e.target.value))
                 }
                 style={{ width: "100%" }}
                 className="range-slider"
               />
-              <p
-                style={{
-                  fontSize: "11px",
-                  color: theme.textDim,
-                  margin: "4px 0 0 0",
-                }}
-              >
-                Standard: 15cm interior, 20-25cm exterior
-              </p>
             </div>
 
-            <div style={{ marginBottom: "16px" }}>
+            {/* Wall Height */}
+            <div style={{ marginBottom: "20px" }}>
               <label
                 style={{
                   display: "block",
-                  fontSize: "12px",
-                  marginBottom: "6px",
+                  fontSize: "13px",
+                  marginBottom: "8px",
                   color: theme.text,
                 }}
               >
-                Wall Height: {params.wall_height.toFixed(1)}m
+                Wall Height: {params.wall_height}m
               </label>
               <input
                 type="range"
-                min="2.4"
-                max="4.0"
-                step="0.1"
+                min="1"
+                max="10"
+                step="0.5"
                 value={params.wall_height}
                 onChange={(e) =>
                   updateParam("wall_height", parseFloat(e.target.value))
@@ -597,135 +687,28 @@ export default function MainDApp() {
               />
             </div>
 
-            <div style={{ marginBottom: "16px" }}>
+            {/* Debug */}
+            <div>
               <label
-                style={{
-                  display: "block",
-                  fontSize: "12px",
-                  marginBottom: "6px",
-                  color: theme.text,
-                }}
-              >
-                Door Height: {params.door_height.toFixed(1)}m
-              </label>
-              <input
-                type="range"
-                min="2.0"
-                max="2.4"
-                step="0.1"
-                value={params.door_height}
-                onChange={(e) =>
-                  updateParam("door_height", parseFloat(e.target.value))
-                }
-                style={{ width: "100%" }}
-                className="range-slider"
-              />
-            </div>
-
-            <div style={{ marginBottom: "16px" }}>
-              <label
-                style={{
-                  display: "block",
-                  fontSize: "12px",
-                  marginBottom: "6px",
-                  color: theme.text,
-                }}
-              >
-                Window Sill Height: {params.window_sill.toFixed(1)}m
-              </label>
-              <input
-                type="range"
-                min="0.6"
-                max="1.2"
-                step="0.1"
-                value={params.window_sill}
-                onChange={(e) =>
-                  updateParam("window_sill", parseFloat(e.target.value))
-                }
-                style={{ width: "100%" }}
-                className="range-slider"
-              />
-            </div>
-
-            <h3
-              style={{
-                margin: "20px 0 16px 0",
-                fontSize: "13px",
-                fontWeight: "600",
-                textTransform: "uppercase",
-                color: theme.textMuted,
-                letterSpacing: "0.05em",
-              }}
-            >
-              Options
-            </h3>
-
-            <div
-              style={{ display: "flex", flexDirection: "column", gap: "10px" }}
-            >
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  fontSize: "13px",
-                }}
+                style={{ display: "flex", alignItems: "center", gap: "8px" }}
               >
                 <input
                   type="checkbox"
-                  checked={params.snap_corners}
-                  onChange={(e) =>
-                    updateParam("snap_corners", e.target.checked)
-                  }
+                  checked={params.debug_vis}
+                  onChange={(e) => updateParam("debug_vis", e.target.checked)}
                 />
-                <span style={{ color: theme.text }}>
-                  Snap wall corners together
+                <span style={{ fontSize: "13px", color: theme.text }}>
+                  Save Debug Images
                 </span>
-              </label>
-
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  fontSize: "13px",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={params.orthogonalize}
-                  onChange={(e) =>
-                    updateParam("orthogonalize", e.target.checked)
-                  }
-                />
-                <span style={{ color: theme.text }}>
-                  Force orthogonal walls (90°)
-                </span>
-              </label>
-
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  fontSize: "13px",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={params.use_yolo}
-                  onChange={(e) => updateParam("use_yolo", e.target.checked)}
-                />
-                <span style={{ color: theme.text }}>Use YOLO for openings</span>
               </label>
             </div>
           </div>
         )}
 
-        {/* Info */}
+        {/* Tips */}
         <div
           style={{
-            padding: "20px 24px",
+            padding: "24px",
             marginTop: "auto",
             borderTop: `1px solid ${theme.border}`,
             fontSize: "12px",
@@ -733,15 +716,13 @@ export default function MainDApp() {
             lineHeight: "1.6",
           }}
         >
-          <strong style={{ color: theme.textMuted }}>
-            🏗️ CAD-Quality Features:
-          </strong>
-          <ul style={{ margin: "8px 0 0 0", paddingLeft: "20px" }}>
-            <li>Uniform wall thickness</li>
-            <li>Clean orthogonal geometry</li>
-            <li>Proper corner connections</li>
-            <li>Door/window cutouts</li>
-          </ul>
+          <strong style={{ color: theme.textMuted }}>💡 Workflow:</strong>
+          <ol style={{ margin: "8px 0", paddingLeft: "20px" }}>
+            <li>Upload your floorplan image</li>
+            <li>Adjust parameters if needed</li>
+            <li>Click "Generate 3D"</li>
+            <li>Tweak & regenerate anytime!</li>
+          </ol>
         </div>
       </div>
 
@@ -756,16 +737,16 @@ export default function MainDApp() {
         }}
       >
         {url ? (
-          <ModelViewer url={url} />
+          <FloorplanViewer url={url} />
         ) : (
           <div style={{ textAlign: "center", color: theme.textDim }}>
-            <Box size={64} style={{ margin: "0 auto 16px", opacity: 0.3 }} />
-            <p style={{ fontSize: "18px", margin: 0, fontWeight: 600 }}>
-              {fileId ? "Ready to generate" : "No file uploaded"}
+            <Upload size={64} style={{ margin: "0 auto 16px", opacity: 0.3 }} />
+            <p style={{ fontSize: "18px", margin: 0 }}>
+              {fileId ? "Ready to generate!" : "No file uploaded"}
             </p>
             <p style={{ fontSize: "14px", margin: "8px 0 0 0" }}>
               {fileId
-                ? 'Click "Generate 3D" for CAD-quality output'
+                ? 'Click "Generate 3D" to start'
                 : "Upload a floorplan to begin"}
             </p>
           </div>
@@ -773,36 +754,34 @@ export default function MainDApp() {
       </div>
 
       <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
         .range-slider {
           -webkit-appearance: none;
           appearance: none;
-          height: 4px;
+          height: 6px;
           background: ${theme.border};
-          border-radius: 2px;
+          border-radius: 3px;
           outline: none;
         }
         .range-slider::-webkit-slider-thumb {
           -webkit-appearance: none;
           appearance: none;
-          width: 14px;
-          height: 14px;
-          background: ${theme.accent};
+          width: 16px;
+          height: 16px;
+          background: #667eea;
           border-radius: 50%;
           cursor: pointer;
-          box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         }
         .range-slider::-moz-range-thumb {
-          width: 14px;
-          height: 14px;
-          background: ${theme.accent};
+          width: 16px;
+          height: 16px;
+          background: #667eea;
           border-radius: 50%;
           cursor: pointer;
           border: none;
-          box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         }
       `}</style>
     </div>
