@@ -1,11 +1,11 @@
 import React from "react";
 
-import MainDApp from "./civilai/MainApp";
+import AppMilestone3 from "./civilai/milestone3/frontend/AppMilestone3";
 
 const App = () => {
   return (
     <>
-      <MainDApp />
+      <AppMilestone3 />
     </>
   );
 };
