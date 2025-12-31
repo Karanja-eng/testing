@@ -1,11 +1,11 @@
 import React from "react";
 
-import AppMilestone3 from "./civilai/milestone3/frontend/AppMilestone3";
+import ProApp from "./ThreeD/arch_pro/ui/ProApp";
 
 const App = () => {
   return (
     <>
-      <AppMilestone3 />
+      <ProApp />
     </>
   );
 };

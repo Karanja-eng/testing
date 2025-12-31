@@ -1,810 +1,421 @@
-import React, { useState, useRef, Suspense } from "react";
+import React, { useState, Suspense, useMemo } from "react";
 import { Canvas } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
+import { OrbitControls, PerspectiveCamera, Environment, SoftShadows } from "@react-three/drei";
+import * as THREE from "three";
 import {
-  Upload,
-  Eye,
-  Download,
-  Settings,
-  Loader2,
-  AlertCircle,
-  CheckCircle2,
-  X,
-  Box,
-  Home,
-  Menu,
-  Sun,
-  Moon,
-  EyeOff,
+    Upload, Settings, Loader2,
+    X, Box, Sun, Moon, Layers, MousePointer2,
+    Maximize2, Trash2, Cpu, Ruler, Activity
 } from "lucide-react";
 
 const API_BASE = "http://localhost:8001";
 
 // ============================================================================
-// 3D COMPONENTS
+// 3D COMPONENTS (REACTIVE)
 // ============================================================================
-const Wall = ({ start, end, height, thickness, floorLevel }) => {
-  const length = Math.sqrt(
-    Math.pow(end[0] - start[0], 2) + Math.pow(end[1] - start[1], 2)
-  );
-  const angle = Math.atan2(end[1] - start[1], end[0] - start[0]);
-  const midX = (start[0] + end[0]) / 2;
-  const midY = (start[1] + end[1]) / 2;
-  const baseHeight = floorLevel * height;
 
-  return (
-    <mesh
-      position={[midX, baseHeight + height / 2, midY]}
-      rotation={[0, -angle, 0]}
-      castShadow
-      receiveShadow
-    >
-      <boxGeometry args={[length, height, thickness]} />
-      <meshStandardMaterial color="#C8C8C8" roughness={0.8} metalness={0.1} />
-    </mesh>
-  );
+const Wall = ({ wall, height, floorLevel, isSelected, onSelect }) => {
+    const { start, end, thickness, segments } = wall;
+    const angle = Math.atan2(end[1] - start[1], end[0] - start[0]);
+    const baseHeight = floorLevel * height;
+    const length = Math.sqrt(Math.pow(end[0] - start[0], 2) + Math.pow(end[1] - start[1], 2));
+    const midX = (start[0] + end[0]) / 2;
+    const midY = (start[1] + end[1]) / 2;
+
+    const wallColor = isSelected ? "#3b82f6" : "#e2e8f0";
+
+    if (segments && segments.length > 0) {
+        return (
+            <group onClick={(e) => { e.stopPropagation(); onSelect(wall); }}>
+                {segments.map((seg, idx) => {
+                    const s = seg.start;
+                    const e = seg.end;
+                    const segLen = Math.sqrt(Math.pow(e[0] - s[0], 2) + Math.pow(e[1] - s[1], 2));
+                    const mX = (s[0] + e[0]) / 2;
+                    const mY = (s[1] + e[1]) / 2;
+                    return (
+                        <mesh key={idx} position={[mX, baseHeight + seg.offsetZ + seg.height / 2, mY]} rotation={[0, -angle, 0]} castShadow receiveShadow>
+                            <boxGeometry args={[segLen, seg.height, thickness]} />
+                            <meshStandardMaterial color={wallColor} roughness={0.6} metalness={0.1} />
+                        </mesh>
+                    );
+                })}
+            </group>
+        );
+    }
+
+    return (
+        <mesh position={[midX, baseHeight + height / 2, midY]} rotation={[0, -angle, 0]} castShadow receiveShadow onClick={(e) => { e.stopPropagation(); onSelect(wall); }}>
+            <boxGeometry args={[length, height, thickness]} />
+            <meshStandardMaterial color={wallColor} roughness={0.6} metalness={0.1} />
+        </mesh>
+    );
 };
 
-const Door = ({
-  position,
-  width,
-  height,
-  rotation,
-  floorLevel,
-  wallHeight,
-}) => {
-  const baseHeight = floorLevel * wallHeight;
+const Window = ({ window, floorLevel, wallHeight, isSelected, onSelect }) => {
+    const { position, width, height, rotation, sillHeight } = window;
+    const baseHeight = floorLevel * wallHeight;
+    const frameColor = isSelected ? "#3b82f6" : "#1e293b"; // Bold dark frames
 
-  return (
-    <group
-      position={[position[0], baseHeight, position[1]]}
-      rotation={[0, rotation, 0]}
-    >
-      <mesh position={[0, height / 2, 0]} castShadow>
-        <boxGeometry args={[width, height, 0.05]} />
-        <meshStandardMaterial color="#654321" roughness={0.7} />
-      </mesh>
-      <mesh position={[width * 0.4, height * 0.5, 0.03]}>
-        <sphereGeometry args={[0.04, 16, 16]} />
-        <meshStandardMaterial color="#C0C0C0" metalness={0.9} roughness={0.2} />
-      </mesh>
-    </group>
-  );
+    return (
+        <group position={[position[0], baseHeight + sillHeight, position[1]]} rotation={[0, rotation, 0]} onClick={(e) => { e.stopPropagation(); onSelect(window); }}>
+            {/* Glass */}
+            <mesh position={[0, height / 2, 0]}>
+                <boxGeometry args={[width - 0.1, height - 0.1, 0.02]} />
+                <meshPhysicalMaterial color="#93c5fd" transparent opacity={0.4} transmission={0.9} roughness={0} />
+            </mesh>
+            {/* Frame - Outer */}
+            <mesh position={[0, height / 2, 0]}>
+                <boxGeometry args={[width, height, 0.1]} />
+                <meshStandardMaterial color={frameColor} wireframe={false} roughness={0.5} />
+            </mesh>
+            {/* Sill */}
+            <mesh position={[0, 0, 0.08]} scale={[1.1, 1, 1]}>
+                <boxGeometry args={[width, 0.05, 0.2]} />
+                <meshStandardMaterial color={frameColor} />
+            </mesh>
+        </group>
+    );
 };
 
-const Window = ({
-  position,
-  width,
-  height,
-  rotation,
-  floorLevel,
-  wallHeight,
-  sillHeight,
-}) => {
-  const baseHeight = floorLevel * wallHeight;
+const Door = ({ door, floorLevel, wallHeight, isSelected, onSelect }) => {
+    const { position, width, height, rotation } = door;
+    const baseHeight = floorLevel * wallHeight;
+    const frameColor = isSelected ? "#3b82f6" : "#475569";
 
-  return (
-    <group
-      position={[position[0], baseHeight + sillHeight, position[1]]}
-      rotation={[0, rotation, 0]}
-    >
-      <mesh position={[0, height / 2, 0]}>
-        <boxGeometry args={[width, height, 0.03]} />
-        <meshPhysicalMaterial
-          color="#87CEEB"
-          transparent
-          opacity={0.3}
-          transmission={0.9}
-          roughness={0.1}
-        />
-      </mesh>
-      <mesh position={[0, height / 2, 0]}>
-        <boxGeometry args={[width * 0.03, height, 0.04]} />
-        <meshStandardMaterial color="#FFFFFF" />
-      </mesh>
-    </group>
-  );
+    return (
+        <group position={[position[0], baseHeight, position[1]]} rotation={[0, rotation, 0]} onClick={(e) => { e.stopPropagation(); onSelect(door); }}>
+            {/* Frame */}
+            <mesh position={[0, height / 2, 0]}>
+                <boxGeometry args={[width, height, 0.12]} />
+                <meshStandardMaterial color={frameColor} />
+            </mesh>
+            {/* Leaf */}
+            <mesh position={[0, height / 2, 0]}>
+                <boxGeometry args={[width - 0.08, height - 0.04, 0.04]} />
+                <meshStandardMaterial color="#334155" roughness={0.8} />
+            </mesh>
+        </group>
+    );
+};
+
+const FurnitureMesh = ({ item, floorLevel, wallHeight, isSelected, onSelect }) => {
+    const [w, d, h] = item.size;
+    const baseHeight = floorLevel * wallHeight;
+    const color = isSelected ? "#3b82f6" : "#cbd5e1";
+
+    return (
+        <mesh position={[item.position[0], baseHeight + h / 2, item.position[1]]} rotation={[0, item.rotation, 0]} onClick={(e) => { e.stopPropagation(); onSelect(item); }} castShadow>
+            <boxGeometry args={[w, h, d]} />
+            <meshStandardMaterial color={color} roughness={0.7} />
+        </mesh>
+    );
+};
+
+const RoomMesh = ({ room, floorLevel, wallHeight }) => {
+    const shape = useMemo(() => {
+        if (!room.polygon || room.polygon.length < 3) return null;
+        const s = new THREE.Shape();
+        s.moveTo(room.polygon[0][0], room.polygon[0][1]);
+        room.polygon.slice(1).forEach(p => s.lineTo(p[0], p[1]));
+        s.closePath();
+        return s;
+    }, [room.polygon]);
+
+    const color = useMemo(() => {
+        const t = room.type.toLowerCase();
+        if (t.includes("bedroom")) return "#60a5fa";
+        if (t.includes("bath")) return "#34d399";
+        if (t.includes("kitchen")) return "#fb923c";
+        if (t.includes("living")) return "#fbbf24";
+        return "#94a3b8";
+    }, [room.type]);
+
+    if (!shape) return null;
+
+    return (
+        <mesh position={[0, floorLevel * wallHeight + 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+            <shapeGeometry args={[shape]} />
+            <meshStandardMaterial color={color} opacity={0.6} transparent roughness={1} />
+        </mesh>
+    );
 };
 
 const FloorSlab = ({ walls, thickness, floorLevel, wallHeight }) => {
-  if (!walls || walls.length === 0) return null;
+    const bounds = useMemo(() => {
+        if (!walls.length) return null;
+        const pts = walls.flatMap(w => [w.start, w.end]);
+        const xs = pts.map(p => p[0]);
+        const ys = pts.map(p => p[1]);
+        return {
+            minX: Math.min(...xs) - 1, maxX: Math.max(...xs) + 1,
+            minY: Math.min(...ys) - 1, maxY: Math.max(...ys) + 1
+        };
+    }, [walls]);
 
-  const points = [];
-  walls.forEach((wall) => {
-    points.push([wall.start[0], wall.start[1]]);
-    points.push([wall.end[0], wall.end[1]]);
-  });
+    if (!bounds) return null;
+    const w = bounds.maxX - bounds.minX;
+    const d = bounds.maxY - bounds.minY;
 
-  const centerX = points.reduce((sum, p) => sum + p[0], 0) / points.length;
-  const centerY = points.reduce((sum, p) => sum + p[1], 0) / points.length;
-
-  const minX = Math.min(...points.map((p) => p[0]));
-  const maxX = Math.max(...points.map((p) => p[0]));
-  const minY = Math.min(...points.map((p) => p[1]));
-  const maxY = Math.max(...points.map((p) => p[1]));
-
-  const width = maxX - minX + 0.5;
-  const depth = maxY - minY + 0.5;
-  const baseHeight = floorLevel * wallHeight;
-
-  return (
-    <mesh
-      position={[centerX, baseHeight - thickness / 2, centerY]}
-      receiveShadow
-    >
-      <boxGeometry args={[width, thickness, depth]} />
-      <meshStandardMaterial color="#D0D0D0" roughness={0.9} />
-    </mesh>
-  );
-};
-
-const RoofSlab = ({ walls, thickness, totalFloors, wallHeight }) => {
-  if (!walls || walls.length === 0) return null;
-
-  const points = [];
-  walls.forEach((wall) => {
-    points.push([wall.start[0], wall.start[1]]);
-    points.push([wall.end[0], wall.end[1]]);
-  });
-
-  const centerX = points.reduce((sum, p) => sum + p[0], 0) / points.length;
-  const centerY = points.reduce((sum, p) => sum + p[1], 0) / points.length;
-
-  const minX = Math.min(...points.map((p) => p[0]));
-  const maxX = Math.max(...points.map((p) => p[0]));
-  const minY = Math.min(...points.map((p) => p[1]));
-  const maxY = Math.max(...points.map((p) => p[1]));
-
-  const width = maxX - minX + 0.5;
-  const depth = maxY - minY + 0.5;
-  const roofHeight = totalFloors * wallHeight + thickness / 2;
-
-  return (
-    <mesh position={[centerX, roofHeight, centerY]} receiveShadow castShadow>
-      <boxGeometry args={[width, thickness, depth]} />
-      <meshStandardMaterial color="#8B7355" roughness={0.8} />
-    </mesh>
-  );
-};
-
-const Scene3D = ({ buildingData, showFloor, showRoof, darkMode }) => {
-  if (!buildingData || buildingData.floors.length === 0) return null;
-
-  return (
-    <>
-      <ambientLight intensity={darkMode ? 0.3 : 0.5} />
-      <directionalLight
-        position={[20, 30, 20]}
-        intensity={darkMode ? 0.8 : 1.2}
-        castShadow
-      />
-      <directionalLight
-        position={[-20, 25, -15]}
-        intensity={darkMode ? 0.4 : 0.6}
-      />
-      <hemisphereLight
-        args={[
-          darkMode ? "#4a5568" : "#ffffff",
-          darkMode ? "#1a202c" : "#444444",
-          darkMode ? 0.4 : 0.6,
-        ]}
-      />
-
-      {buildingData.floors.map((floor, floorIndex) => (
-        <group key={`floor-${floorIndex}`}>
-          {showFloor && (
-            <FloorSlab
-              walls={floor.walls}
-              thickness={0.25}
-              floorLevel={floorIndex}
-              wallHeight={buildingData.wallHeight}
-            />
-          )}
-
-          {floor.walls.map((wall, i) => (
-            <Wall
-              key={`wall-${floorIndex}-${i}`}
-              start={wall.start}
-              end={wall.end}
-              height={buildingData.wallHeight}
-              thickness={wall.thickness}
-              floorLevel={floorIndex}
-            />
-          ))}
-
-          {floor.doors.map((door, i) => (
-            <Door
-              key={`door-${floorIndex}-${i}`}
-              position={door.position}
-              width={door.width}
-              height={door.height}
-              rotation={door.rotation}
-              floorLevel={floorIndex}
-              wallHeight={buildingData.wallHeight}
-            />
-          ))}
-
-          {floor.windows.map((window, i) => (
-            <Window
-              key={`window-${floorIndex}-${i}`}
-              position={window.position}
-              width={window.width}
-              height={window.height}
-              rotation={window.rotation}
-              floorLevel={floorIndex}
-              wallHeight={buildingData.wallHeight}
-              sillHeight={window.sillHeight}
-            />
-          ))}
-        </group>
-      ))}
-
-      {showRoof && (
-        <RoofSlab
-          walls={buildingData.floors[0].walls}
-          thickness={0.25}
-          totalFloors={buildingData.floors.length}
-          wallHeight={buildingData.wallHeight}
-        />
-      )}
-
-      <gridHelper
-        args={[
-          100,
-          100,
-          darkMode ? "#4a5568" : "#888888",
-          darkMode ? "#2d3748" : "#cccccc",
-        ]}
-      />
-    </>
-  );
-};
-
-// ============================================================================
-// MAIN APP
-// ============================================================================
-export default function FloorPlanVisualizer() {
-  const [file, setFile] = useState(null);
-  const [fileId, setFileId] = useState(null);
-  const [preview, setPreview] = useState(null);
-  const [processing, setProcessing] = useState(false);
-  const [buildingData, setBuildingData] = useState(null);
-  const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
-  const [activeTab, setActiveTab] = useState("upload");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [darkMode, setDarkMode] = useState(false);
-
-  const [settings, setSettings] = useState({
-    wallHeight: 3.0,
-    wallThickness: 0.15,
-    numFloors: 1,
-    pixelsPerMeter: 100,
-    useYolo: true,
-    showFloor: true,
-    showRoof: true,
-  });
-
-  const fileInputRef = useRef(null);
-
-  const handleFileSelect = (e) => {
-    const selectedFile = e.target.files[0];
-    if (!selectedFile) return;
-
-    const validExtensions = [".png", ".jpg", ".jpeg", ".dxf", ".dwg"];
-    const hasValidExtension = validExtensions.some((ext) =>
-      selectedFile.name.toLowerCase().endsWith(ext)
+    return (
+        <mesh position={[(bounds.minX + bounds.maxX) / 2, floorLevel * wallHeight - thickness / 2, (bounds.minY + bounds.maxY) / 2]} receiveShadow>
+            <boxGeometry args={[w, thickness, d]} />
+            <meshStandardMaterial color="#f1f5f9" roughness={0.8} />
+        </mesh>
     );
+};
 
-    if (!hasValidExtension) {
-      setError("Please select PNG, JPG, DXF, or DWG file");
-      return;
-    }
+const Scene3D = ({ buildingData, selectedId, onSelect, showFloor, darkMode }) => {
+    if (!buildingData) return null;
+    return (
+        <>
+            <SoftShadows size={25} samples={10} />
+            <PerspectiveCamera makeDefault position={[10, 10, 10]} fov={50} />
+            <OrbitControls makeDefault />
+            <Environment preset="city" />
+            <ambientLight intensity={0.5} />
+            <directionalLight position={[10, 20, 10]} intensity={1.5} castShadow shadow-mapSize={[2048, 2048]} />
 
-    setFile(selectedFile);
-    setError(null);
-
-    if (selectedFile.type.startsWith("image/")) {
-      const reader = new FileReader();
-      reader.onload = (e) => setPreview(e.target.result);
-      reader.readAsDataURL(selectedFile);
-    }
-  };
-
-  const uploadFile = async () => {
-    if (!file) return;
-    setProcessing(true);
-    setError(null);
-
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const response = await fetch(`${API_BASE}/upload`, {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) throw new Error("Upload failed");
-
-      const data = await response.json();
-      setFileId(data.file_id);
-      setSuccess(`✓ Uploaded: ${data.filename}`);
-      setActiveTab("process");
-    } catch (err) {
-      setError(
-        err.message || "Upload failed. Check backend at http://localhost:8001"
-      );
-    } finally {
-      setProcessing(false);
-    }
-  };
-
-  const processFloorPlan = async () => {
-    if (!fileId) return;
-    setProcessing(true);
-    setError(null);
-
-    try {
-      const formData = new FormData();
-      formData.append("file_id", fileId);
-      formData.append("wall_height", settings.wallHeight);
-      formData.append("wall_thickness", settings.wallThickness);
-      formData.append("num_floors", settings.numFloors);
-      formData.append("pixels_per_meter", settings.pixelsPerMeter);
-      formData.append("use_yolo", settings.useYolo);
-
-      const isDxf = file && file.name.toLowerCase().endsWith(".dxf");
-      const endpoint = isDxf
-        ? `${API_BASE}/api/process-dxf`
-        : `${API_BASE}/api/process`;
-
-      const response = await fetch(endpoint, {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Processing failed");
-      }
-
-      const data = await response.json();
-      setBuildingData(data);
-
-      const f = data.floors[0];
-      setSuccess(
-        `✓ Detected: ${f.walls.length} walls, ${f.doors.length} doors, ${f.windows.length} windows, ${f.rooms.length} rooms`
-      );
-      setActiveTab("view");
-    } catch (err) {
-      setError(err.message || "Processing failed");
-    } finally {
-      setProcessing(false);
-    }
-  };
-
-  const loadSample = () => {
-    setBuildingData({
-      floors: [
-        {
-          level: 0,
-          walls: [
-            { start: [0, 0], end: [10, 0], thickness: 0.3, length: 10 },
-            { start: [10, 0], end: [10, 8], thickness: 0.3, length: 8 },
-            { start: [10, 8], end: [0, 8], thickness: 0.3, length: 10 },
-            { start: [0, 8], end: [0, 0], thickness: 0.3, length: 8 },
-            { start: [5, 0], end: [5, 4], thickness: 0.2, length: 4 },
-            { start: [0, 4], end: [10, 4], thickness: 0.2, length: 10 },
-          ],
-          doors: [
-            {
-              position: [5, 0],
-              width: 0.9,
-              height: 2.1,
-              rotation: 0,
-              type: "door",
-            },
-            {
-              position: [2.5, 4],
-              width: 0.9,
-              height: 2.1,
-              rotation: Math.PI / 2,
-              type: "door",
-            },
-          ],
-          windows: [
-            {
-              position: [2, 0],
-              width: 1.5,
-              height: 1.2,
-              rotation: 0,
-              type: "window",
-              sillHeight: 0.9,
-            },
-            {
-              position: [8, 0],
-              width: 1.5,
-              height: 1.2,
-              rotation: 0,
-              type: "window",
-              sillHeight: 0.9,
-            },
-          ],
-          rooms: [
-            { name: "Living Room", center: [5, 2], type: "living", area: 40 },
-            { name: "Bedroom", center: [5, 6], type: "bedroom", area: 40 },
-          ],
-          dimensions: {},
-        },
-      ],
-      wallHeight: 3.0,
-      wallThickness: 0.15,
-      totalFloors: 1,
-      scaleFactor: 1.0,
-      detectedScale: false,
-    });
-    setSuccess("✓ Sample loaded!");
-    setActiveTab("view");
-  };
-
-  const reset = () => {
-    setFile(null);
-    setFileId(null);
-    setPreview(null);
-    setBuildingData(null);
-    setError(null);
-    setSuccess(null);
-    setActiveTab("upload");
-  };
-
-  const bg = darkMode ? "bg-gray-900" : "bg-gray-50";
-  const card = darkMode ? "bg-gray-800" : "bg-white";
-  const text = darkMode ? "text-gray-100" : "text-gray-900";
-  const border = darkMode ? "border-gray-700" : "border-gray-200";
-
-  return (
-    <div className={`w-full h-screen ${bg} flex flex-col`}>
-      <header
-        className={`${
-          darkMode
-            ? "bg-gradient-to-r from-blue-900 to-purple-900"
-            : "bg-gradient-to-r from-blue-600 to-purple-600"
-        } border-b ${border} shadow-lg`}
-      >
-        <div className="px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="p-2 hover:bg-white hover:bg-opacity-10 rounded-lg transition text-white"
-            >
-              {sidebarOpen ? (
-                <X className="w-6 h-6" />
-              ) : (
-                <Menu className="w-6 h-6" />
-              )}
-            </button>
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-500 rounded-lg">
-                <Box className="w-8 h-8 text-white" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-white">
-                  ArchCAD Pro 3D
-                </h1>
-                <p className="text-sm text-blue-200">Three.js Visualizer</p>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setDarkMode(!darkMode)}
-              className="p-2 hover:bg-white hover:bg-opacity-10 rounded-lg transition text-white"
-            >
-              {darkMode ? (
-                <Sun className="w-5 h-5" />
-              ) : (
-                <Moon className="w-5 h-5" />
-              )}
-            </button>
-            {fileId && (
-              <button
-                onClick={reset}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg flex items-center gap-2"
-              >
-                <X className="w-4 h-4" /> Reset
-              </button>
-            )}
-          </div>
-        </div>
-      </header>
-
-      {error && (
-        <div className="bg-red-50 dark:bg-red-900 border-l-4 border-red-500 p-4 flex items-center gap-3">
-          <AlertCircle className="w-5 h-5 text-red-600" />
-          <span className="flex-1 text-sm text-red-800 dark:text-red-200">
-            {error}
-          </span>
-          <button onClick={() => setError(null)}>
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-      )}
-      {success && (
-        <div className="bg-green-50 dark:bg-green-900 border-l-4 border-green-500 p-4 flex items-center gap-3">
-          <CheckCircle2 className="w-5 h-5 text-green-600" />
-          <span className="flex-1 text-sm text-green-800 dark:text-green-200">
-            {success}
-          </span>
-          <button onClick={() => setSuccess(null)}>
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-      )}
-
-      <div className="flex-1 flex overflow-hidden">
-        <aside
-          className={`${
-            sidebarOpen ? "w-80" : "w-0"
-          } ${card} border-r ${border} overflow-y-auto transition-all`}
-        >
-          {sidebarOpen && (
-            <div className="p-4 space-y-4">
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { key: "upload", icon: Upload, label: "Upload" },
-                  {
-                    key: "process",
-                    icon: Settings,
-                    label: "Process",
-                    disabled: !fileId,
-                  },
-                  {
-                    key: "view",
-                    icon: Eye,
-                    label: "View",
-                    disabled: !buildingData,
-                  },
-                ].map((t) => (
-                  <button
-                    key={t.key}
-                    onClick={() => !t.disabled && setActiveTab(t.key)}
-                    disabled={t.disabled}
-                    className={`p-3 rounded-lg flex flex-col items-center gap-1 transition ${
-                      activeTab === t.key
-                        ? "bg-blue-600 text-white"
-                        : t.disabled
-                        ? "bg-gray-200 opacity-50 cursor-not-allowed"
-                        : "bg-gray-200 hover:bg-gray-300"
-                    }`}
-                  >
-                    <t.icon className="w-5 h-5" />
-                    <span className="text-xs font-medium">{t.label}</span>
-                  </button>
-                ))}
-              </div>
-
-              {activeTab === "upload" && (
-                <div className="space-y-4">
-                  <h3 className={`text-lg font-semibold ${text}`}>
-                    Upload Floor Plan
-                  </h3>
-                  <div
-                    onClick={() => fileInputRef.current?.click()}
-                    className={`border-2 border-dashed ${border} hover:border-blue-500 rounded-xl p-8 text-center cursor-pointer transition`}
-                  >
-                    {preview ? (
-                      <img
-                        src={preview}
-                        alt="Preview"
-                        className="max-w-full h-48 object-contain mx-auto"
-                      />
-                    ) : (
-                      <div>
-                        <Upload className="w-12 h-12 mx-auto mb-4 text-gray-400" />
-                        <p className={text}>Click to upload</p>
-                        <p className="text-sm text-gray-400 mt-2">
-                          PNG, JPG, DXF, DWG
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".png,.jpg,.jpeg,.dxf,.dwg"
-                    onChange={handleFileSelect}
-                    className="hidden"
-                  />
-                  {file && !fileId && (
-                    <button
-                      onClick={uploadFile}
-                      disabled={processing}
-                      className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-semibold flex items-center justify-center gap-2 transition"
-                    >
-                      {processing ? (
-                        <>
-                          <Loader2 className="w-5 h-5 animate-spin" />{" "}
-                          Uploading...
-                        </>
-                      ) : (
-                        <>
-                          <Upload className="w-5 h-5" /> Upload
-                        </>
-                      )}
-                    </button>
-                  )}
-                  <button
-                    onClick={loadSample}
-                    className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-lg font-semibold flex items-center justify-center gap-2 transition"
-                  >
-                    <Home className="w-5 h-5" /> Load Sample
-                  </button>
-                </div>
-              )}
-
-              {activeTab === "process" && (
-                <div className="space-y-4">
-                  <h3 className={`text-lg font-semibold ${text}`}>
-                    Configuration
-                  </h3>
-                  {[
-                    { key: "wallHeight", label: "Wall Height (m)", step: 0.1 },
-                    {
-                      key: "wallThickness",
-                      label: "Wall Thickness (m)",
-                      step: 0.01,
-                    },
-                    { key: "numFloors", label: "Number of Floors", step: 1 },
-                    {
-                      key: "pixelsPerMeter",
-                      label: "Pixels Per Meter",
-                      step: 10,
-                    },
-                  ].map(({ key, label, step }) => (
-                    <div key={key}>
-                      <label
-                        className={`block text-sm font-medium ${text} mb-2`}
-                      >
-                        {label}
-                      </label>
-                      <input
-                        type="number"
-                        step={step}
-                        value={settings[key]}
-                        onChange={(e) =>
-                          setSettings({
-                            ...settings,
-                            [key]:
-                              parseFloat(e.target.value) ||
-                              parseInt(e.target.value),
-                          })
-                        }
-                        className={`w-full px-4 py-2 ${
-                          darkMode ? "bg-gray-700" : "bg-white"
-                        } border ${border} rounded-lg`}
-                      />
-                    </div>
-                  ))}
-                  <button
-                    onClick={processFloorPlan}
-                    disabled={processing}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-semibold flex items-center justify-center gap-2 transition"
-                  >
-                    {processing ? (
-                      <>
-                        <Loader2 className="w-5 h-5 animate-spin" />{" "}
-                        Processing...
-                      </>
-                    ) : (
-                      <>
-                        <Settings className="w-5 h-5" /> Process
-                      </>
-                    )}
-                  </button>
-                </div>
-              )}
-
-              {activeTab === "view" && buildingData && (
-                <div className="space-y-4">
-                  <h3 className={`text-lg font-semibold ${text}`}>
-                    Building Stats
-                  </h3>
-                  <div
-                    className={`${
-                      darkMode ? "bg-gray-700" : "bg-gray-100"
-                    } rounded-lg p-4`}
-                  >
-                    <div className="space-y-2 text-sm">
-                      {[
-                        ["Walls", buildingData.floors[0].walls.length],
-                        ["Doors", buildingData.floors[0].doors.length],
-                        ["Windows", buildingData.floors[0].windows.length],
-                        ["Rooms", buildingData.floors[0].rooms.length],
-                      ].map(([label, value]) => (
-                        <div key={label} className="flex justify-between">
-                          <span className="text-gray-400">{label}</span>
-                          <span className="font-semibold">{value}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="space-y-3">
-                    {[
-                      { key: "showFloor", label: "Show Floor" },
-                      { key: "showRoof", label: "Show Roof" },
-                    ].map(({ key, label }) => (
-                      <label
-                        key={key}
-                        className="flex items-center justify-between"
-                      >
-                        <span className="text-sm">{label}</span>
-                        <button
-                          onClick={() =>
-                            setSettings({ ...settings, [key]: !settings[key] })
-                          }
-                          className={`p-2 rounded-lg transition ${
-                            settings[key]
-                              ? "bg-blue-600 text-white"
-                              : darkMode
-                              ? "bg-gray-700"
-                              : "bg-gray-300"
-                          }`}
-                        >
-                          {settings[key] ? (
-                            <Eye className="w-4 h-4" />
-                          ) : (
-                            <EyeOff className="w-4 h-4" />
-                          )}
-                        </button>
-                      </label>
+            {buildingData.floors.map((floor, fIdx) => (
+                <group key={`f-${fIdx}`}>
+                    {showFloor && <FloorSlab walls={floor.walls} thickness={0.15} floorLevel={fIdx} wallHeight={buildingData.wallHeight} />}
+                    {floor.walls.map(w => (
+                        <Wall key={w.id} wall={w} height={buildingData.wallHeight} floorLevel={fIdx} isSelected={selectedId === w.id} onSelect={onSelect} />
                     ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </aside>
+                    {floor.doors.map(d => (
+                        <Door key={d.id} door={d} wallHeight={buildingData.wallHeight} floorLevel={fIdx} isSelected={selectedId === d.id} onSelect={onSelect} />
+                    ))}
+                    {floor.windows.map(w => (
+                        <Window key={w.id} window={w} wallHeight={buildingData.wallHeight} floorLevel={fIdx} isSelected={selectedId === w.id} onSelect={onSelect} />
+                    ))}
+                    {floor.furniture.map(item => (
+                        <FurnitureMesh key={item.id} item={item} wallHeight={buildingData.wallHeight} floorLevel={fIdx} isSelected={selectedId === item.id} onSelect={onSelect} />
+                    ))}
+                    {floor.rooms.map(r => (
+                        <RoomMesh key={r.id} room={r} floorLevel={fIdx} wallHeight={buildingData.wallHeight} />
+                    ))}
+                </group>
+            ))}
+            <gridHelper args={[100, 100, "#cbd5e1", "#f1f5f9"]} position={[0, -0.01, 0]} />
+        </>
+    );
+};
 
-        <main className={`flex-1 ${darkMode ? "bg-gray-950" : "bg-white"}`}>
-          {buildingData ? (
-            <Canvas shadows camera={{ position: [15, 15, 15], fov: 50 }}>
-              <Suspense fallback={null}>
-                <Scene3D
-                  buildingData={buildingData}
-                  showFloor={settings.showFloor}
-                  showRoof={settings.showRoof}
-                  darkMode={darkMode}
-                />
-                <OrbitControls
-                  enableDamping
-                  dampingFactor={0.05}
-                  minDistance={5}
-                  maxDistance={100}
-                />
-              </Suspense>
-            </Canvas>
-          ) : (
-            <div className="h-full flex items-center justify-center">
-              <div className="text-center">
-                <Home className="w-24 h-24 mx-auto mb-4 text-gray-400" />
-                <h2 className="text-3xl font-bold text-gray-600 mb-3">
-                  No Model Loaded
-                </h2>
-                <p className="text-gray-500 mb-6">
-                  Upload a floor plan to start
-                </p>
-                <button
-                  onClick={() => setActiveTab("upload")}
-                  className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
-                >
-                  Upload Floor Plan
-                </button>
-              </div>
-            </div>
-          )}
-        </main>
-      </div>
-    </div>
-  );
+// ============================================================================
+// MAIN APP COMPONENT
+// ============================================================================
+
+export default function FloorPlanVisualizer() {
+    const [fileId, setFileId] = useState(null);
+    const [buildingData, setBuildingData] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [selectedElement, setSelectedElement] = useState(null);
+    const [showFloor, setShowFloor] = useState(true);
+    const [darkMode, setDarkMode] = useState(true);
+    const [generating3D, setGenerating3D] = useState(false);
+
+    // Update building data in real-time
+    const updateElement = (id, field, value) => {
+        if (!buildingData) return;
+        const newData = JSON.parse(JSON.stringify(buildingData));
+        newData.floors.forEach(floor => {
+            const collections = [floor.walls, floor.doors, floor.windows, floor.furniture];
+            collections.forEach(col => {
+                const item = col.find(i => i.id === id);
+                if (item) {
+                    item[field] = parseFloat(value);
+                    // Also update selectedElement so Sidebar stays in sync
+                    setSelectedElement({ ...item });
+                }
+            });
+        });
+        setBuildingData(newData);
+    };
+
+    const handleUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        setLoading(true);
+        const fd = new FormData();
+        fd.append("file", file);
+        try {
+            const res = await fetch(`${API_BASE}/upload`, { method: "POST", body: fd });
+            const data = await res.json();
+            setFileId(data.file_id);
+            await processFloorplan(data.file_id);
+        } catch (err) { console.error(err); }
+        setLoading(false);
+    };
+
+    const processFloorplan = async (fid) => {
+        const fd = new FormData();
+        fd.append("file_id", fid);
+        fd.append("use_yolo", "true");
+        try {
+            const res = await fetch(`${API_BASE}/api/process`, { method: "POST", body: fd });
+            const data = await res.json();
+            setBuildingData(data);
+        } catch (err) { console.error(err); }
+    };
+
+    const generateHighResGLB = async () => {
+        if (!fileId) return;
+        setGenerating3D(true);
+        const fd = new FormData();
+        fd.append("file_id", fileId);
+        fd.append("wall_height", buildingData.wallHeight);
+        try {
+            const res = await fetch(`${API_BASE}/api/generate-3d`, { method: "POST", body: fd });
+            const data = await res.json();
+            window.open(`${API_BASE}${data.glb_url}`, "_blank");
+        } catch (err) { console.error(err); }
+        setGenerating3D(false);
+    };
+
+    return (
+        <div className={`flex h-screen w-full overflow-hidden ${darkMode ? "bg-slate-950 text-slate-100" : "bg-slate-50 text-slate-900"}`}>
+            {/* Left Sidebar: Elements & Controls */}
+            <aside className={`w-80 flex flex-col border-r ${darkMode ? "border-slate-800" : "border-slate-200"}`}>
+                <div className="p-4 border-b border-inherit bg-slate-900/50 flex items-center gap-3">
+                    <Box className="text-blue-500" />
+                    <h1 className="font-bold text-lg tracking-tight">ArchCAD Pro</h1>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4 space-y-6">
+                    {/* Project Config */}
+                    <section className="space-y-3">
+                        <label className="text-xs font-semibold text-slate-500 uppercase flex items-center gap-2">
+                            <Settings size={14} /> Project Settings
+                        </label>
+                        <div className="space-y-4">
+                            <div className="space-y-2">
+                                <label className="text-sm">Global Wall Height (m)</label>
+                                <input
+                                    type="range" min="2" max="5" step="0.1"
+                                    value={buildingData?.wallHeight || 3}
+                                    onChange={(e) => setBuildingData({ ...buildingData, wallHeight: parseFloat(e.target.value) })}
+                                    className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                />
+                                <div className="text-right text-xs text-blue-500 font-mono">{buildingData?.wallHeight.toFixed(1)}m</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* Inspector */}
+                    {selectedElement && (
+                        <section className={`p-4 rounded-xl border animate-in slide-in-from-left duration-300 ${darkMode ? "bg-slate-900 border-slate-700" : "bg-white border-slate-200 shadow-sm"}`}>
+                            <div className="flex justify-between items-center mb-4">
+                                <label className="text-xs font-bold text-blue-500 uppercase tracking-wider">Inspector</label>
+                                <button onClick={() => setSelectedElement(null)} className="text-slate-500 hover:text-white"><X size={16} /></button>
+                            </div>
+                            <div className="space-y-4">
+                                <div className="flex items-center gap-3 p-2 bg-blue-500/10 rounded-lg">
+                                    <Cpu size={18} className="text-blue-500" />
+                                    <span className="text-sm font-medium capitalize">{selectedElement.type?.replace(/_/g, " ") || "Element"}</span>
+                                </div>
+                                {selectedElement.width !== undefined && (
+                                    <div className="space-y-2">
+                                        <label className="text-xs flex items-center justify-between">
+                                            <span>Width (m)</span>
+                                            <span className="font-mono text-blue-400">{selectedElement.width.toFixed(2)}</span>
+                                        </label>
+                                        <input type="range" min="0.5" max="5" step="0.05" value={selectedElement.width} onChange={(e) => updateElement(selectedElement.id, "width", e.target.value)} className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                                    </div>
+                                )}
+                                {selectedElement.height !== undefined && (
+                                    <div className="space-y-2">
+                                        <label className="text-xs flex items-center justify-between">
+                                            <span>Height (m)</span>
+                                            <span className="font-mono text-blue-400">{selectedElement.height.toFixed(2)}</span>
+                                        </label>
+                                        <input type="range" min="0.5" max="3" step="0.05" value={selectedElement.height} onChange={(e) => updateElement(selectedElement.id, "height", e.target.value)} className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                                    </div>
+                                )}
+                                {selectedElement.sillHeight !== undefined && (
+                                    <div className="space-y-2">
+                                        <label className="text-xs flex items-center justify-between">
+                                            <span>Sill Height (m)</span>
+                                            <span className="font-mono text-blue-400">{selectedElement.sillHeight.toFixed(2)}</span>
+                                        </label>
+                                        <input type="range" min="0" max="2" step="0.05" value={selectedElement.sillHeight} onChange={(e) => updateElement(selectedElement.id, "sillHeight", e.target.value)} className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                                    </div>
+                                )}
+                            </div>
+                        </section>
+                    )}
+
+                    {!fileId && (
+                        <div className="flex flex-col items-center justify-center h-48 border-2 border-dashed border-slate-800 rounded-2xl gap-4 text-center p-4">
+                            <Upload className="text-slate-700" size={32} />
+                            <p className="text-sm text-slate-500 leading-relaxed">Upload building plan to begin architectural modeling</p>
+                            <input type="file" onChange={handleUpload} className="hidden" id="plan-upload" />
+                            <label htmlFor="plan-upload" className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-bold cursor-pointer transition-all active:scale-95">Select Image</label>
+                        </div>
+                    )}
+                </div>
+
+                <div className="p-4 border-t border-inherit space-y-3 bg-slate-900/50">
+                    <button
+                        onClick={generateHighResGLB}
+                        disabled={!fileId || generating3D}
+                        className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-xl font-bold transition-all shadow-lg shadow-blue-900/20"
+                    >
+                        {generating3D ? <Loader2 className="animate-spin" /> : <Layers size={18} />}
+                        {generating3D ? "Blender Processing..." : "Export Pro 3D"}
+                    </button>
+                    <div className="flex gap-2">
+                        <button onClick={() => setDarkMode(!darkMode)} className="flex-1 p-2 border border-inherit rounded-lg flex justify-center hover:bg-slate-800 transition-colors">{darkMode ? <Sun size={18} /> : <Moon size={18} />}</button>
+                        <button className="flex-1 p-2 border border-inherit rounded-lg flex justify-center text-slate-500 hover:text-red-500 hover:bg-red-500/10 transition-colors"><Trash2 size={18} /></button>
+                    </div>
+                </div>
+            </aside>
+
+            {/* Main View: 3D Canvas */}
+            <main className="flex-1 relative bg-slate-950">
+                {loading && (
+                    <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-950/80 backdrop-blur-md">
+                        <div className="relative">
+                            <Loader2 className="animate-spin text-blue-500 mb-6" size={64} />
+                            <div className="absolute inset-0 blur-xl bg-blue-500/20 animate-pulse"></div>
+                        </div>
+                        <p className="text-xl font-bold tracking-tight mb-2">Analyzing Floorplan...</p>
+                        <p className="text-sm text-slate-500 font-mono italic">YOLO CV v8 active_</p>
+                    </div>
+                )}
+
+                {/* Toolbox Overlays */}
+                <div className="absolute top-6 left-6 z-10 flex flex-col gap-3">
+                    <div className="flex items-center gap-3 px-4 py-2 bg-slate-900/80 border border-slate-800 rounded-2xl backdrop-blur-xl shadow-2xl">
+                        <Activity size={16} className="text-green-500" />
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">System Status: Live Render</span>
+                    </div>
+                    <div className="flex items-center gap-3 px-4 py-2 bg-slate-900/80 border border-slate-800 rounded-2xl backdrop-blur-xl shadow-2xl">
+                        <Ruler size={16} className="text-blue-500" />
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Analysis Units: Metric (m)</span>
+                    </div>
+                </div>
+
+                <div className="absolute bottom-6 right-6 z-10 flex flex-col gap-3">
+                    <button onClick={() => setShowFloor(!showFloor)} title="Toggle Foundation" className={`p-4 rounded-2xl shadow-2xl backdrop-blur-md transition-all active:scale-90 ${showFloor ? "bg-blue-600 text-white" : "bg-slate-900 text-slate-400 border border-slate-800"}`}>
+                        <Maximize2 size={24} />
+                    </button>
+                    <button onClick={() => setSelectedElement(null)} title="Clear Selection" className="p-4 bg-slate-900 text-slate-400 border border-slate-800 rounded-2xl shadow-2xl backdrop-blur-md hover:text-white transition-all active:scale-90">
+                        <MousePointer2 size={24} />
+                    </button>
+                </div>
+
+                <Canvas shadows dpr={[1, 2]}>
+                    <Suspense fallback={null}>
+                        <Scene3D
+                            buildingData={buildingData}
+                            selectedId={selectedElement?.id}
+                            onSelect={setSelectedElement}
+                            showFloor={showFloor}
+                            darkMode={darkMode}
+                        />
+                    </Suspense>
+                </Canvas>
+            </main>
+        </div>
+    );
 }
